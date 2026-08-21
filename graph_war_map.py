@@ -96,9 +96,65 @@ def get_player_turn(img: np.ndarray, players: list[tuple[float, float]]) -> tupl
 
 
 
-def attack_enemy(x: float, y: float, enemies: list[tuple[float, float]]) -> str:
-    enemy = random.choice(enemies)
+def attack_enemy(x: float, y: float, enemies: list[tuple[float, float]], obstacles: list[tuple[float, float, float]]) -> str:
+    for enemy in enemies:
+        if is_line_clear((x, y), enemy, obstacles):
+            m = (enemy[1] - y) / (enemy[0] - x)
+            return f"{m}x"
 
-    m = (enemy[1] - y) / (enemy[0] - x)
-
+    m = (enemies[0][1] - y) / (enemies[0][0] - x)
     return f"{m}x"
+
+
+# x, y, radius
+def get_obstacles(img: np.ndarray) -> list[tuple[float, float, float]]:
+    obstacles = []
+    hsv = img
+
+    lower_black = np.array([0, 0, 0])
+    upper_black = np.array([180, 255, 50]) # Adjust '50' based on lighting/shadows
+
+    mask = cv2.inRange(hsv, lower_black, upper_black)
+    kernel = np.ones((5,5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+
+    for i in range(1, num_labels):
+        x, y, w, h, area = stats[i]
+
+        if area > 100:
+            radius_pixels = math.sqrt(area / math.pi)
+            center_x, center_y = pixel_to_coord(img, x + w/2, y + h/2)
+
+            right_edge_x, _ = pixel_to_coord(img, x + w/2 + radius_pixels, y + h/2)
+            radius_game = abs(right_edge_x - center_x)
+
+            obstacles.append((center_x, center_y, radius_game))
+    return obstacles
+
+def is_line_clear(p1: tuple[float, float], p2: tuple[float, float], obstacles: list[tuple[float, float, float]]) -> bool:
+    x1, y1 = p1
+    x2, y2 = p2
+
+    dx, dy = x2 - x1, y2 - y1
+    length_sq = dx*dx + dy*dy
+
+    if length_sq == 0:
+        return True
+
+    for cx, cy, r in obstacles:
+        cx_x1, cy_y1 = cx - x1, cy - y1
+        t = (cx_x1 * dx + cy_y1 * dy) / length_sq
+
+        t = max(0, min(1, t))
+        closest_x = x1 + t * dx
+        closest_y = y1 + t * dy
+
+        dist_sq = (cx - closest_x)**2 + (cy - closest_y)**2
+
+        if dist_sq < r * r:
+            return False
+
+    return True

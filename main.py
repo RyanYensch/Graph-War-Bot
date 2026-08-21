@@ -1,6 +1,6 @@
 import cv2
 from window_capture import capture_window_by_name
-from graph_war_map import get_grid, label_coord, get_players, get_player_turn, attack_enemy
+from graph_war_map import get_grid, label_coord, get_players, get_player_turn, attack_enemy, get_obstacles, is_line_clear
 import random
 
 def main():
@@ -9,6 +9,8 @@ def main():
     if img is not None:
         hsv_full = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         cropped = get_grid(hsv_full)
+
+        obstacles = get_obstacles(cropped)
 
         players = get_players(cropped)
 
@@ -25,7 +27,7 @@ def main():
         label_coord(cropped, curr_x, curr_y)
 
         if (curr_x, curr_y) in team:
-            print(attack_enemy(curr_x, curr_y, enemy))
+            print(attack_enemy(curr_x, curr_y, enemy, obstacles))
 
         bgr_for_display = cv2.cvtColor(cropped, cv2.COLOR_HSV2BGR)
         cv2.imshow("Cropped", bgr_for_display)
