@@ -17,6 +17,13 @@ def coord_to_pixel(img: np.ndarray, xCoord: float, yCoord: float) -> tuple[int, 
 
     return int(w / 2 + xCoord * w / WIDTH), int(h / 2 - yCoord * h / HEIGHT)
 
+def pixel_to_coord(img: np.ndarray, xPixel: int, yPixel: int) -> tuple[float, float]:
+    h, w, _ = img.shape
+    WIDTH = 50
+    HEIGHT = 30
+
+    return xPixel * WIDTH / w - WIDTH / 2, HEIGHT / 2 - yPixel * HEIGHT / h
+
 def y_coord_to_pixel(img: np.ndarray, yCoord: float) -> int:
     h, _, _ = img.shape
     HEIGHT = 30
@@ -27,7 +34,10 @@ def label_coord(cropped_window: np.ndarray, xCoord: float, yCoord: float) -> Non
 
     cv2.circle(cropped_window, (x, y), 5, (50, 255, 255), -1)
 
-def label_players(img: np.ndarray):
+# Label and get coords
+def get_players(img: np.ndarray) -> list[tuple[float, float]]:
+    players: list[tuple[float, float]] = []
+
     hsv = img
 
     lower_yellow = np.array([30, 200, 200])
@@ -40,6 +50,6 @@ def label_players(img: np.ndarray):
         x, y, w, h, area = stats[i]
 
         if area > 50:
-            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            players.append(pixel_to_coord(img, x + w / 2, y + w / 2))
 
-    return img
+    return players
