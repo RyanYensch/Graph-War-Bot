@@ -1,6 +1,7 @@
 import cv2
 from window_capture import capture_window_by_name
-from graph_war_map import get_grid, label_coord, get_players
+from graph_war_map import get_grid, label_coord, get_players, get_player_turn, attack_enemy
+import random
 
 def main():
     img = capture_window_by_name("Graphwar")
@@ -11,9 +12,20 @@ def main():
 
         players = get_players(cropped)
 
-        for x, y in players:
-            label_coord(cropped, x, y)
-            print(x, y)
+        team: list[tuple[float, float]] = []
+        enemy: list[tuple[float, float]] = []
+
+        for player in players:
+            if player[0] < 0:
+                team.append(player)
+            else:
+                enemy.append(player)
+
+        curr_x, curr_y = get_player_turn(cropped, players)
+        label_coord(cropped, curr_x, curr_y)
+
+        if (curr_x, curr_y) in team:
+            print(attack_enemy(curr_x, curr_y, enemy))
 
         bgr_for_display = cv2.cvtColor(cropped, cv2.COLOR_HSV2BGR)
         cv2.imshow("Cropped", bgr_for_display)
