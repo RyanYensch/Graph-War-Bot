@@ -25,4 +25,21 @@ def y_coord_to_pixel(img: np.ndarray, yCoord: float) -> int:
 def label_coord(cropped_window: np.ndarray, xCoord: float, yCoord: float) -> None:
     x, y = coord_to_pixel(cropped_window, xCoord, yCoord)
 
-    cv2.circle(cropped_window, (x, y), 5, (0, 255, 0), -1)
+    cv2.circle(cropped_window, (x, y), 5, (50, 255, 255), -1)
+
+def label_players(img: np.ndarray):
+    hsv = img
+
+    lower_yellow = np.array([30, 200, 200])
+    upper_yellow = np.array([40, 255, 255])
+    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+
+    for i in range(1, num_labels):
+        x, y, w, h, area = stats[i]
+
+        if area > 50:
+            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    return img
