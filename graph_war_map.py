@@ -10,13 +10,19 @@ def get_grid(graphwar_window_img: np.ndarray) -> np.ndarray:
     return graphwar_window_img[t:b, l:r]
 
 
-def label_coord(cropped_window: np.ndarray, xCoord: float, yCoord: float) -> None:
-    h, w, _ = cropped_window.shape
-
+def coord_to_pixel(img: np.ndarray, xCoord: float, yCoord: float) -> tuple[int, int]:
+    h, w, _ = img.shape
     WIDTH = 50
     HEIGHT = 30
 
-    x = int(w / 2 + xCoord * w / WIDTH)
-    y = int(h / 2 - yCoord * h / HEIGHT)
+    return int(w / 2 + xCoord * w / WIDTH), int(h / 2 - yCoord * h / HEIGHT)
+
+def y_coord_to_pixel(img: np.ndarray, yCoord: float) -> int:
+    h, _, _ = img.shape
+    HEIGHT = 30
+    return int(h / 2 - yCoord * h / HEIGHT)
+
+def label_coord(cropped_window: np.ndarray, xCoord: float, yCoord: float) -> None:
+    x, y = coord_to_pixel(cropped_window, xCoord, yCoord)
 
     cv2.circle(cropped_window, (x, y), 5, (0, 255, 0), -1)
