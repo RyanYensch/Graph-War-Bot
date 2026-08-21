@@ -1,6 +1,6 @@
 import cv2
 from window_capture import capture_window_by_name
-from graph_war_map import get_grid
+from graph_war_map import get_grid, label_coord
 
 def main():
     img = capture_window_by_name("Graphwar")
@@ -11,6 +11,7 @@ def main():
         cv2.imshow("Graphwar", img)
 
         cropped = get_grid(img)
+        label_coord(cropped, 12.5, 7.5)
         cv2.imshow("Cropped", cropped)
 
         cv2.waitKey(0)
