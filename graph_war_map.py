@@ -158,3 +158,25 @@ def is_line_clear(p1: tuple[float, float], p2: tuple[float, float], obstacles: l
             return False
 
     return True
+
+
+
+def generate_equation_from_points(points: list[tuple[float, float]]) -> str:
+    res: str = ""
+
+    for i in range(len(points) - 1):
+        x1, y1 = points[i]
+        x2, y2 = points[i + 1]
+
+        if x1 >= x2:
+            return res
+
+        m = (y2 - y1) / (x2 - x1) / 2
+
+        abs1 = f"abs(x - {x1})" if x1 > 0 else f"abs(x + {abs(x1)})"
+        abs2 = f"abs(x - {x2})" if x2 > 0 else f"abs(x + {abs(x2)})"
+
+        res += f" + {m} * ({abs1} - {abs2})"
+
+    return res
+
