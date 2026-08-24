@@ -2,6 +2,21 @@ import cv2
 import numpy as np
 import math
 import random
+from dataclasses import dataclass
+
+X_MIN = -25.0
+X_MAX = 25.0
+Y_MIN = -15.0
+Y_MAX = 15.0
+
+EPS = 1e-9
+
+@dataclass(frozen=True)
+class Waypoint:
+    point: tuple[float, float]
+
+    enemy_index: int | None = None
+
 
 def get_grid(graphwar_window_img: np.ndarray) -> np.ndarray:
     h, w, _ = graphwar_window_img.shape
@@ -51,7 +66,7 @@ def get_players(img: np.ndarray) -> list[tuple[float, float]]:
         x, y, w, h, area = stats[i]
 
         if area > 50:
-            players.append(pixel_to_coord(img, x + w / 2, y + w / 2))
+            players.append(pixel_to_coord(img, x + w / 2, y + h / 2))
 
     return players
 
@@ -96,14 +111,27 @@ def get_player_turn(img: np.ndarray, players: list[tuple[float, float]]) -> tupl
 
 
 
-def attack_enemy(x: float, y: float, enemies: list[tuple[float, float]], obstacles: list[tuple[float, float, float]]) -> str:
-    for enemy in enemies:
-        if is_line_clear((x, y), enemy, obstacles):
-            m = (enemy[1] - y) / (enemy[0] - x)
-            return f"{m}x"
+def attack_enemies(
+    x: float,
+    y: float,
+    enemies: list[tuple[float, float]],
+    obstacles: list[tuple[float, float, float]]
+) -> tuple[
+    str,
+    list[tuple[float, float]],
+    list[tuple[float, float]]
+]:
+    start = (x, y)
 
-    m = (enemies[0][1] - y) / (enemies[0][0] - x)
-    return f"{m}x"
+    path, hit_enemies = find_best_path(
+        start,
+        enemies,
+        obstacles
+    )
+
+    equation = generate_equation_from_points(path)
+
+    return equation, path, hit_enemies
 
 
 # x, y, radius
@@ -160,23 +188,478 @@ def is_line_clear(p1: tuple[float, float], p2: tuple[float, float], obstacles: l
     return True
 
 
+def format_abs(value: float) -> str:
+    if abs(value) < EPS:
+        return "abs(x)"
 
-def generate_equation_from_points(points: list[tuple[float, float]]) -> str:
-    res: str = ""
+    if value > 0:
+        return f"abs(x - {value:.5g})"
+
+    return f"abs(x + {abs(value):.5g})"
+
+
+def generate_equation_from_points(
+    points: list[tuple[float, float]]
+) -> str:
+    terms: list[str] = []
 
     for i in range(len(points) - 1):
         x1, y1 = points[i]
         x2, y2 = points[i + 1]
 
-        if x1 >= x2:
-            return res
+        if x2 <= x1:
+            continue
 
-        m = (y2 - y1) / (x2 - x1) / 2
+        slope = (y2 - y1) / (x2 - x1)
 
-        abs1 = f"abs(x - {x1})" if x1 > 0 else f"abs(x + {abs(x1)})"
-        abs2 = f"abs(x - {x2})" if x2 > 0 else f"abs(x + {abs(x2)})"
+        m = slope / 2
 
-        res += f" + {m} * ({abs1} - {abs2})"
+        if abs(m) < EPS:
+            continue
 
-    return res
+        abs1 = format_abs(x1)
+        abs2 = format_abs(x2)
 
+        expression = (
+            f"{abs(m):.5g}"
+            f"*({abs1} - {abs2})"
+        )
+
+        if not terms:
+            if m < 0:
+                terms.append("-" + expression)
+            else:
+                terms.append(expression)
+
+        elif m < 0:
+            terms.append(" - " + expression)
+
+        else:
+            terms.append(" + " + expression)
+
+    if not terms:
+        return "0"
+
+    return "".join(terms)
+
+
+def inflate_obstacles(obstacles: list[tuple[float, float, float]], clearence: float) -> list[tuple[float, float, float]]:
+    return [(x, y, r + clearence) for x, y, r in obstacles]
+
+
+def point_in_bounds(point: tuple[float, float]) -> bool:
+    x, y = point
+
+    return (X_MIN <= x <= X_MAX and Y_MIN <= y <= Y_MAX)
+
+
+def point_is_safe(point: tuple[float, float], obstacles: list[tuple[float, float, float]]) -> bool:
+    if not point_in_bounds(point):
+        return False
+
+    x, y = point
+
+    for cx, cy, r in obstacles:
+        if (x - cx) ** 2 + (y - cy) ** 2 < r ** 2:
+            return False
+
+    return True
+
+
+def generate_obstacle_detour(obstacles: list[tuple[float, float, float]]) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+
+    for cx, cy, r in obstacles:
+        x_positions = [cx - r, cx, cx + r]
+
+        y_positions = [cy - r, cy + r, Y_MIN, Y_MAX]
+
+        for x in x_positions:
+            for y in y_positions:
+                points.append((x, y))
+
+    return points
+
+
+def can_travel(p1: tuple[float, float], p2: tuple[float, float], obstacles: list[tuple[float, float, float]]) -> bool:
+    x1, _ = p1
+    x2, _ = p2
+
+    if x2 <= x1 + EPS:
+        return False
+
+    if not  point_in_bounds(p1):
+        return False
+
+    if not point_in_bounds(p2):
+        return False
+
+    return is_line_clear(p1, p2, obstacles)
+
+
+def distance_point_to_segment(
+    point: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float]
+) -> float:
+    px, py = point
+    x1, y1 = p1
+    x2, y2 = p2
+
+    dx = x2 - x1
+    dy = y2 - y1
+
+    length_sq = dx * dx + dy * dy
+
+    if length_sq == 0:
+        return math.dist(point, p1)
+
+    t = (
+        (px - x1) * dx
+        + (py - y1) * dy
+    ) / length_sq
+
+    t = max(0.0, min(1.0, t))
+
+    closest_x = x1 + t * dx
+    closest_y = y1 + t * dy
+
+    return math.dist(
+        point,
+        (closest_x, closest_y)
+    )
+
+
+def enemies_hit_on_segment(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    enemies: list[tuple[float, float]],
+    hit_tolerance: float = 0.35
+) -> list[int]:
+    x1, _ = p1
+    x2, _ = p2
+
+    hit: list[int] = []
+
+    for i, enemy in enumerate(enemies):
+        enemy_x, _ = enemy
+
+        if enemy_x <= x1 + EPS:
+            continue
+
+        if enemy_x > x2 + EPS:
+            continue
+
+        distance = distance_point_to_segment(
+            enemy,
+            p1,
+            p2
+        )
+
+        if distance <= hit_tolerance:
+            hit.append(i)
+
+    return hit
+
+
+
+def build_waypoints(
+    start: tuple[float, float],
+    enemies: list[tuple[float, float]],
+    obstacles: list[tuple[float, float, float]]
+) -> list[Waypoint]:
+
+    waypoints: list[Waypoint] = [
+        Waypoint(start)
+    ]
+
+    if not enemies:
+        return waypoints
+
+    rightmost_enemy_x = max(
+        enemy[0]
+        for enemy in enemies
+    )
+
+    for i, enemy in enumerate(enemies):
+        if enemy[0] <= start[0] + EPS:
+            continue
+
+        if point_is_safe(enemy, obstacles):
+            waypoints.append(
+                Waypoint(
+                    enemy,
+                    enemy_index=i
+                )
+            )
+
+    used_points = {
+        (
+            round(w.point[0], 8),
+            round(w.point[1], 8)
+        )
+        for w in waypoints
+    }
+
+    for point in generate_obstacle_detour(obstacles):
+        x, _ = point
+
+        if x <= start[0] + EPS:
+            continue
+
+        if x > rightmost_enemy_x + EPS:
+            continue
+
+        key = (
+            round(point[0], 8),
+            round(point[1], 8)
+        )
+
+        if key in used_points:
+            continue
+
+        if not point_is_safe(
+            point,
+            obstacles
+        ):
+            continue
+
+        waypoints.append(
+            Waypoint(point)
+        )
+
+        used_points.add(key)
+
+    waypoints.sort(
+        key=lambda waypoint: waypoint.point[0]
+    )
+
+    return waypoints
+
+
+def find_best_path(
+    start: tuple[float, float],
+    enemies: list[tuple[float, float]],
+    obstacles: list[tuple[float, float, float]],
+    clearence: float = 0.15,
+    hit_tolerance: float = 0.35
+) -> tuple[
+    list[tuple[float, float]],
+    list[tuple[float, float]]
+]:
+
+    if not enemies:
+        return [start], []
+
+    safe_obstacles = inflate_obstacles(
+        obstacles,
+        clearence
+    )
+
+    waypoints = build_waypoints(
+        start,
+        enemies,
+        safe_obstacles
+    )
+
+    start_index = next(
+        i
+        for i, waypoint in enumerate(waypoints)
+        if waypoint.point == start
+    )
+
+    n = len(waypoints)
+
+    hits = [-1] * n
+
+    dist = [float("inf")] * n
+    segments = [float("inf")] * n
+
+    parent: list[int | None] = [None] * n
+
+    hits[start_index] = 0
+    dist[start_index] = 0.0
+    segments[start_index] = 0
+
+    for j in range(start_index + 1, n):
+        curr = waypoints[j]
+
+        for i in range(start_index, j):
+            if hits[i] == -1:
+                continue
+
+            previous = waypoints[i]
+
+            if not can_travel(
+                previous.point,
+                curr.point,
+                safe_obstacles
+            ):
+                continue
+
+            edge_hits = enemies_hit_on_segment(
+                previous.point,
+                curr.point,
+                enemies,
+                hit_tolerance
+            )
+
+            new_hits = (
+                hits[i]
+                + len(edge_hits)
+            )
+
+            new_dist = (
+                dist[i]
+                + math.dist(
+                    previous.point,
+                    curr.point
+                )
+            )
+
+            new_segments = segments[i] + 1
+
+            better = False
+
+            if new_hits > hits[j]:
+                better = True
+
+            elif new_hits == hits[j]:
+
+                if new_dist < dist[j] - EPS:
+                    better = True
+
+                elif (
+                    abs(new_dist - dist[j]) <= EPS
+                    and new_segments < segments[j]
+                ):
+                    better = True
+
+            if better:
+                hits[j] = new_hits
+                dist[j] = new_dist
+                segments[j] = new_segments
+                parent[j] = i
+
+    best_index = start_index
+
+    for i in range(start_index, n):
+
+        if hits[i] > hits[best_index]:
+            best_index = i
+
+        elif hits[i] == hits[best_index]:
+
+            if dist[i] < dist[best_index]:
+                best_index = i
+
+    path: list[tuple[float, float]] = []
+
+    current: int | None = best_index
+
+    while current is not None:
+        path.append(
+            waypoints[current].point
+        )
+
+        current = parent[current]
+
+    path.reverse()
+
+    hit_indices: set[int] = set()
+
+    for i in range(len(path) - 1):
+        segment_hits = enemies_hit_on_segment(
+            path[i],
+            path[i + 1],
+            enemies,
+            hit_tolerance
+        )
+
+        hit_indices.update(segment_hits)
+
+    hit_enemies = [
+        enemies[i]
+        for i in sorted(hit_indices)
+    ]
+
+    return path, hit_enemies
+
+
+
+def draw_attack_path(
+    img: np.ndarray,
+    path: list[tuple[float, float]],
+    hit_enemies: list[tuple[float, float]]
+) -> None:
+    for i in range(len(path) - 1):
+        p1 = coord_to_pixel(
+            img,
+            path[i][0],
+            path[i][1]
+        )
+
+        p2 = coord_to_pixel(
+            img,
+            path[i + 1][0],
+            path[i + 1][1]
+        )
+
+        cv2.line(
+            img,
+            p1,
+            p2,
+            (0, 165, 255),
+            2
+        )
+
+    for i, point in enumerate(path):
+        pixel = coord_to_pixel(
+            img,
+            point[0],
+            point[1]
+        )
+
+        if i == 0:
+            colour = (0, 255, 0)
+        elif i == len(path) - 1:
+            colour = (255, 0, 255)
+        else:
+            colour = (255, 255, 0)
+
+        cv2.circle(
+            img,
+            pixel,
+            5,
+            colour,
+            -1
+        )
+
+        cv2.putText(
+            img,
+            str(i),
+            (
+                pixel[0] + 7,
+                pixel[1] - 7
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            colour,
+            1,
+            cv2.LINE_AA
+        )
+
+    for enemy in hit_enemies:
+        pixel = coord_to_pixel(
+            img,
+            enemy[0],
+            enemy[1]
+        )
+
+        cv2.circle(
+            img,
+            pixel,
+            10,
+            (0, 0, 255),
+            2
+        )
